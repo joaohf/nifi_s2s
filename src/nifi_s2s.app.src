@@ -1,0 +1,14 @@
+{application, nifi_s2s,
+ [{description, "nifi site 2 site protocol"},
+  {vsn, "0.1.0"},
+  {registered, []},
+  {applications,
+   [kernel,
+    stdlib
+   ]},
+  {env,[]},
+  {modules, []},
+
+  {licenses, ["MIT"]},
+  {links, [{"GitHub", "https://github.com/joaohf/nifi_s2s"}]}
+ ]}.
