@@ -1,6 +1,16 @@
 -ifndef(nifi_s2s).
 -define(nifi_s2s, true).
 
+%/**
+% * Represents a piece of data that is to be sent to or that was received from a
+% * NiFi instance.
+% */
+-record(data_packet, {
+    size :: non_neg_integer(),
+    payload :: binary(),
+    attributes :: map(),
+    transaction :: any()
+}).
 
 -record(peer, {
     host :: string(),
@@ -141,10 +151,17 @@
 %} RequestType;
 
 %const char *SiteToSiteRequest::RequestTypeStr[MAX_REQUEST_TYPE] = {
-%    "NEGOTIATE_FLOWFILE_CODEC",
+-define(NEGOTIATE_FLOWFILE_CODEC, <<"NEGOTIATE_FLOWFILE_CODEC">>).
 -define(REQUEST_PEER_LIST, <<"REQUEST_PEER_LIST">>).
 %    "SEND_FLOWFILES",
 %    "RECEIVE_FLOWFILES", 
 -define(SHUTDOWN, <<"SHUTDOWN">>).
+
+%/**
+% * An enumeration for specifying the direction in which data should be
+% * transferred between a client and a remote NiFi instance.
+% */
+-define(TRANSFER_DIRECTION_SEND, 0).
+-define(TRANSFER_DIRECTION_RECEIVE, 1).
 
 -endif.

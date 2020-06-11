@@ -7,14 +7,16 @@
 
 -export_type([client_type/0]).
 
--export([get_site_to_site_detail/1, create_client/1]).
+-export([get_site_to_site_detail/1,
+         create_client/1,
+         transmit_payload/3]).
 
-create_raw_socket(#{host := Host, port := Port}) ->
+create_raw_socket(#{host := Host, port := Port, portId := PortId}) ->
     Ifc = "lo0",
 
     Peer = nifi_s2s_peer:new(Host, Port, "lo0"),
 
-    Client = nifi_s2s_client:new(Peer),
+    Client = nifi_s2s_client:new(PortId, Peer),
 
     % 3. The client sends another request to get remote peers using the
     % TCP port number returned at #2.
@@ -31,7 +33,7 @@ create_raw_socket(#{host := Host, port := Port}) ->
     % based on workload information.
     {ok, NewPeer}  = nifi_s2s_client:decides_which_peer(Peers),
 
-    NClient = nifi_s2s_client:new(nifi_s2s_peer:new(NewPeer, Ifc)),
+    NClient = nifi_s2s_client:new(PortId, nifi_s2s_peer:new(NewPeer, Ifc)),
 
     % 6. Connect to remote Peer
     {ok, _Pid} = nifi_s2s_raw_protocol_statem:start_link(NClient, peer).
@@ -48,3 +50,10 @@ create_client(#{client_type := raw} = S2SConfig) ->
 % for RAW and TCP transport protocols.
 get_site_to_site_detail(_Url) ->
     #{host => "localhost", port => 9001, client_type => raw}.
+
+
+-spec transmit_payload(Pid :: pid(), Payload :: binary(), Attributes :: map()) -> boolean().
+
+transmit_payload(Pid, Payload, Attributes) ->
+    nifi_s2s_raw_protocol_statem:transmit_payload(Pid, Payload, Attributes).
+    

@@ -6,9 +6,9 @@
 
 -behaviour(gen_statem).
 
--export([start_link/2, stop/1, get_peer_list/1]).
--export([callback_mode/0, init/1]).
--export([idle/3, established/3, handshaked/3, get_peer_list/3]).
+-export([start_link/2, stop/1, get_peer_list/1, transmit_payload/3]).
+-export([callback_mode/0, init/1, terminate/3]).
+-export([idle/3, established/3, handshaked/3, get_peer_list/3, ready/3]).
 
 -include("nifi_s2s.hrl").
 
@@ -76,8 +76,14 @@ stop(Client) ->
 %% @doc Obtains the peer list.
 %% @end
 %%
-get_peer_list(Pid) -> 
+get_peer_list(Pid) ->
+    % TODO: remove this
+    timer:sleep(5000),
     gen_statem:call(Pid, {get_peer_list, []}).
+
+
+transmit_payload(Pid, Payload, Attributes) ->
+    gen_statem:call(Pid, {transmit_payload, Payload, Attributes}).
 
 %% gen_statem callbacks
 
@@ -120,6 +126,10 @@ idle(enter, _OldState, #raw_s2s_protocol{client = Client} = Data) ->
     Actions = [{next_event, internal, establish}],
     {keep_state, idle, NData, Actions};
 
+idle({call, From}, {get_peer_list, []}, #raw_s2s_protocol{}) ->
+    Actions = [{reply, From, {error, idle}}],
+    {keep_state_and_data, Actions};
+
 idle(internal, establish, #raw_s2s_protocol{client = Client} = Data) ->
     case nifi_s2s_peer:open(Client#client.peer) of
         {ok, Peer} ->
@@ -145,6 +155,10 @@ established(internal, initiate_resource_negotiation, Data) ->
     ok = inet:setopts(Data#raw_s2s_protocol.client#client.peer#s2s_peer.stream, [{active, once}]),
 
     {keep_state, Data};
+
+established({call, From}, {get_peer_list, []}, #raw_s2s_protocol{}) ->
+    Actions = [{reply, From, {error, disconnected}}],
+    {keep_state_and_data, Actions};
 
 established(info, {tcp, Socket, Packet}, #raw_s2s_protocol{client = #client{peer = #s2s_peer{stream = Socket}}} = Data) ->
 
@@ -181,11 +195,11 @@ handshaked(internal, handshake, Data) ->
 
     PropertiesBase = #{
         ?GZIP => <<"false">>,
-        %?PORT_IDENTIFIER => Data#raw_s2s_protocol.client#client.port_id_str,
+        ?PORT_IDENTIFIER => list_to_binary(Data#raw_s2s_protocol.client#client.port_id),
         ?REQUEST_EXPIRATION_MILLIS => integer_to_binary(Data#raw_s2s_protocol.timeout)
      },
 
-     Properties = maps:merge(PropertiesBase, PropertiesVersion),
+    Properties = maps:merge(PropertiesBase, PropertiesVersion),
 
     ok = nifi_s2s_peer:write_utf(Data#raw_s2s_protocol.client#client.peer,
         Data#raw_s2s_protocol.client#client.peer#s2s_peer.url),
@@ -221,15 +235,13 @@ handshaked(info, {tcp, Socket, Packet}, #raw_s2s_protocol{client = #client{peer 
             {stop, RespondCode}
     end;
 
-handshaked({call, From}, {get_peer_list, []}, #raw_s2s_protocol{client = #client{peer = #s2s_peer{stream = Socket}}} = Data) ->
+handshaked({call, From}, {get_peer_list, []}, #raw_s2s_protocol{} = Data) ->
 
-    {keep_state, Data};
+    {keep_state, Data#raw_s2s_protocol{from = From}};
 
-handshaked(info, {tcp, Socket, Packet}, #raw_s2s_protocol{client = #client{peer = #s2s_peer{stream = Socket}}} = Data) ->
-
-    %gen_statem:reply(From, {ok, Response}),
-
-    {keep_state, Data}.
+handshaked({call, From}, {get_peer_list, []}, #raw_s2s_protocol{}) ->
+    Actions = [{reply, From, {error, disconnected}}],
+    {keep_state_and_data, Actions}.
 
 
 get_peer_list(enter, handshaked, _Data) ->
@@ -244,9 +256,6 @@ get_peer_list({call, From}, {get_peer_list, []}, #raw_s2s_protocol{} = Data) ->
     {keep_state, Data#raw_s2s_protocol{from = From}};
 
 get_peer_list(info, {tcp, Socket, Packet}, #raw_s2s_protocol{from = From, client = #client{peer = #s2s_peer{stream = Socket}}} = Data) ->
-    
-    ct:pal("xxxxx ~p", [Packet]),
-
     Peers = decode_peer_list(Packet),
 
     ok = gen_statem:reply(From, {ok, Peers}),
@@ -258,9 +267,70 @@ get_peer_list(info, {tcp, Socket, Packet}, #raw_s2s_protocol{from = From, client
     {next_state, idle, Data}.
 
 
-ready(internal, negotiate_code, Data) ->
+ready(enter, handshaked, _Data) ->
+    keep_state_and_data;
+
+ready(internal, negotiate_codec, Data) ->
+
+    ok = nifi_s2s_peer:write_utf(Data#raw_s2s_protocol.client#client.peer, ?NEGOTIATE_FLOWFILE_CODEC),
+
+    ok = nifi_s2s_peer:write_utf(Data#raw_s2s_protocol.client#client.peer, ?CODEC_RESOURCE_NAME),
+
+    Value = <<(Data#raw_s2s_protocol.client#client.currentCodecVersion):32/integer-big>>,
+    ok = nifi_s2s_peer:write(Data#raw_s2s_protocol.client#client.peer, Value),
+
+    ok = inet:setopts(Data#raw_s2s_protocol.client#client.peer#s2s_peer.stream, [{active, once}]),
+
+    keep_state_and_data;
+
+ready(info, {tcp, Socket, Packet}, #raw_s2s_protocol{client = #client{peer = #s2s_peer{stream = Socket}}} = Data) ->
+
+    StatusCode = decode_status_code(Packet),
+
+    case StatusCode of
+        'RESOURCE_OK' ->
+            {keep_state, Data};
+        'DIFFERENT_RESOURCE_VERSION' ->
+            Actions = [{next_event, internal, negotiate_codec}],
+            {keep_state, Data, Actions};
+        'NEGOTIATED_ABORT' ->
+            {stop, StatusCode}
+    end;
+
+ready({call, From}, {transmit_payload, Payload, Attributes}, #raw_s2s_protocol{} = Data) ->
+
+    {ok, Transaction, TransactionId} = nifi_s2s_client:create_transaction(?TRANSFER_DIRECTION_SEND),
+
+    Packet = #data_packet{
+        payload = Payload,
+        attributes = Attributes,
+        transaction = Transaction
+    },
+
+    ok = nifi_s2s_client:send(Data#raw_s2s_protocol.client, Packet),
+
+    ok = nifi_s2s_client:delete_transaction(TransactionId),
+
+    keep_state_and_data.
+
+
+terminate(normal, ready, #raw_s2s_protocol{client = #client{peer = Peer}}) ->
+    %% writeRequestType(SHUTDOWN);
+
+    %%  known_transactions_.clear();
+
+    ok = nifi_s2s_peer:write_utf(Peer, ?SHUTDOWN),
+    
+    _ = nifi_s2s_peer:close(Peer),
+
+    ok;
+
+terminate(_, _, _Data) ->
     ok.
 
+%
+% Helper functions
+%
 
 version5(#raw_s2s_protocol{batch_count = Bc}, bc, Properties) when Bc > 0 ->
     maps:put(?BATCH_COUNT, integer_to_binary(Bc), Properties);
@@ -309,6 +379,9 @@ decode_status_code(<<?DIFFERENT_RESOURCE_VERSION>>) ->
     'DIFFERENT_RESOURCE_VERSION';
 
 decode_status_code(<<?NEGOTIATED_ABORT>>) ->
+    'NEGOTIATED_ABORT';
+
+decode_status_code(<<?NEGOTIATED_ABORT:8/integer, _Rest/bitstring>>) ->
     'NEGOTIATED_ABORT'.
 
 
@@ -325,7 +398,10 @@ decode_response_code(?ILLEGAL_PROPERTY_VALUE) ->
     'ILLEGAL_PROPERTY_VALUE';
 
 decode_response_code(?MISSING_PROPERTY) ->
-    'MISSING_PROPERTY'.
+    'MISSING_PROPERTY';
+
+decode_response_code(?UNKNOWN_PORT) ->
+    'UNKNOWN_PORT'.
 
 
 decode_peer_list(<<Size:32, _/binary>>) when Size == 0 ->
@@ -338,14 +414,11 @@ decode_peer_list(<<Size:32/integer-big, Rest/binary>>) ->
 
 decode_peer(0, {<<HostSize:16/integer, Host:HostSize/binary, Port:32/integer, 
               Secure:8/integer, Count:32/integer>>, Peers}) ->
-    Peer = peer({Host, Port, Secure, Count}),
-    [Peer | Peers];
+    [peer({Host, Port, Secure, Count}) | Peers];
 
 decode_peer(_Elem, {<<HostSize:16/integer, Host:HostSize/binary, Port:32/integer, 
               Secure:8/integer, Count:32/integer, Rest/binary>>, Peers}) ->
-
-    Peer = peer({Host, Port, Secure, Count}),
-    {Rest, [Peer | Peers]}.
+    {Rest, [peer({Host, Port, Secure, Count}) | Peers]}.
 
 
 peer({Host, Port, Secure, Count}) ->

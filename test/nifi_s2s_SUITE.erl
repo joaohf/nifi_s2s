@@ -31,7 +31,7 @@ all() ->
 
 
 suite() ->
-    [{timetrap, {seconds, 15}}].
+    [{timetrap, {seconds, 25}}].
 
 
 init_per_suite(Config) ->
@@ -65,9 +65,13 @@ connect_disconnect() ->
     [].
 
 connect_disconnect(_Config) ->
-    S2SConfig = #{host => "localhost", port => 9001, client_type => raw},
+    S2SConfig = #{host => "localhost",
+     port => 9001,
+     client_type => raw, portId => "8f7630f3-0172-1000-8f82-0a81a44f3d30"},
 
     {ok, _Pid} = nifi_s2s:create_client(S2SConfig),
+
+    ct:sleep(5000),
 
     ok.
 
