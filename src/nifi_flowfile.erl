@@ -1,6 +1,6 @@
 -module(nifi_flowfile).
 
--export([new/1,
+-export([new/0, new/1, new/2,
 get_attributes/1,
 get_content/1,
 get_size/1,
@@ -20,8 +20,14 @@ get_id/1]).
     attributes :: #{}
 }).
 
-new(Content) when is_binary(Content) ->
-    #flowfile{content = Content, size = byte_size(Content)}.
+new() ->
+    new(#{}, <<>>).
+
+new(Content) ->
+    new(#{}, Content).
+
+new(Attributes, Content) when is_map(Attributes), is_binary(Content) ->
+    #flowfile{content = Content, size = byte_size(Content), attributes = Attributes}.
 
 
 get_attributes(#flowfile{attributes = M}) ->
@@ -38,7 +44,7 @@ get_content(undefined) ->
 get_content(#flowfile{content = <<>> = Content}) ->
     {0, Content};
 
-get_content(#flowfile{content = <<>> = Content}) ->
+get_content(#flowfile{content = Content}) ->
     {byte_size(Content), Content}.
 
 

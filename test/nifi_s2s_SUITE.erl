@@ -21,7 +21,8 @@ groups() ->
     [
         {raw, [], [
             connect_disconnect,
-            transfer_payload
+            transfer_payload,
+            transfer_flowfiles
         ]}
     ].
 
@@ -91,6 +92,30 @@ transfer_payload(_Config) ->
     %Attributes = #{ <<"TEST1">> => <<"Test">>},
     Attributes = #{},
     ok = nifi_s2s:transmit_payload(Pid, Payload, Attributes),
+
+    ok.
+
+
+transfer_flowfiles() ->
+    [].
+
+transfer_flowfiles(_Config) ->
+    S2SConfig = #{host => "localhost",
+     port => 9001,
+     client_type => raw, portId => "8f7630f3-0172-1000-8f82-0a81a44f3d30"},
+
+    {ok, Pid} = nifi_s2s:create_client(S2SConfig),
+
+    Content = <<"Test Nifi Content">>,
+    Attributes = #{ <<"TEST1">> => <<"Test">>},
+
+    Flowfile = nifi_flowfile:new( Content),
+
+ct:sleep(5000),
+
+    ok = nifi_s2s:transfer_flowfiles(Pid, Flowfile),
+
+    ct:sleep(5000),
 
     ok.
 

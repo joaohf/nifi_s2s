@@ -51,9 +51,7 @@
 
 
 create(Peer) ->
-    TransactionId = uuid:get_v4(),
-    {ok, Pid} = gen_statem:start_link(?MODULE, {Peer, TransactionId}, []),
-    {ok, Pid, TransactionId}.
+    {ok, {_Pid, _Ref}} = gen_statem:start_monitor(?MODULE, Peer, []).
 
 
 send(Transaction, Packet, Flowfile) ->
@@ -72,7 +70,8 @@ delete(Transaction) ->
 
 callback_mode() -> [state_functions].
 
-init({Peer, TransactionId}) ->
+init(Peer) ->
+    TransactionId = uuid:get_v4(),
     Data = #transaction{peer = Peer, uuid = TransactionId, crc = 0},
     Actions = [{next_event, internal, new}],
     {ok, transaction_started, Data, Actions}.
@@ -149,8 +148,7 @@ transaction_confirmed(internal, complete,
 
 
 transaction_completed(internal, delete, #transaction{from = From}) ->
-    Actions = [{reply, From, ok}],
-    {stop_and_reply, delete, Actions}.
+    {stop_and_reply, normal, {reply, From, ok}}.
 
 
 transaction_canceled(_EventType, _EventContent, _Data) ->
@@ -176,8 +174,6 @@ do_send(#transaction{
         bytes = Bytes,
         crc = Crc0} = Data, Packet, Flowfile) ->
 
-    % prepare the packet and flowfile
-
     {Crc1, Attributes} = write_attributes(Crc0, Packet),
 
     {Crc2, LenP, Payload} =
@@ -190,13 +186,7 @@ do_send(#transaction{
             write_payload(Crc1, Packet)
     end,
 
-    IoData = [Attributes | Payload],
-
-    ct:pal("ss ~p", [IoData]),
-
-    % ? update Package size ?
-
-    ok = nifi_s2s_peer:write(Peer, IoData),
+    ok = nifi_s2s_peer:write(Peer, [Attributes | Payload]),
 
     Data#transaction{current_transfers = Ct + 1,
       total_transfers = Tt + 1,

@@ -39,7 +39,10 @@
 
     client :: client(),
 
-    from :: any()
+    from :: any(),
+
+    transaction :: pid(),
+    transaction_mon_ref :: reference()
 }).
 
 -define(RESOURCE_NAME, <<"SocketFlowFileProtocol">>).
@@ -322,7 +325,7 @@ ready(info, {tcp, Socket, Packet}, #raw_s2s_protocol{client = #client{peer = #s2
 ready({call, From}, {transmit_payload, Payload, Attributes}, #raw_s2s_protocol{} = Data) ->
     Peer = Data#raw_s2s_protocol.client#client.peer,
 
-    {ok, Transaction, _TransactionId} = create_transaction(Peer, ?TRANSFER_DIRECTION_SEND),
+    {ok, {Transaction, Ref}} = create_transaction(Peer, ?TRANSFER_DIRECTION_SEND),
 
     Packet = #data_packet{
         payload = Payload,
@@ -334,13 +337,16 @@ ready({call, From}, {transmit_payload, Payload, Attributes}, #raw_s2s_protocol{}
 
     ok = nifi_s2s_transaction_statem:confirm(Transaction),
 
-    Actions = [{reply, From, ok}],
-    {keep_state_and_data, Actions};
+    NData = Data#raw_s2s_protocol{transaction = Transaction,
+     transaction_mon_ref = Ref,
+     from = From},
+
+    {keep_state, NData};
 
 ready({call, From}, {transfer_flowfile, Flowfile}, #raw_s2s_protocol{} = Data) ->
     Peer = Data#raw_s2s_protocol.client#client.peer,
 
-    {ok, Transaction, _TransactionId} = create_transaction(Peer, ?TRANSFER_DIRECTION_SEND),
+    {ok, {Transaction, Ref}} = create_transaction(Peer, ?TRANSFER_DIRECTION_SEND),
 
     Packet = #data_packet{
         payload = undefined,
@@ -348,22 +354,35 @@ ready({call, From}, {transfer_flowfile, Flowfile}, #raw_s2s_protocol{} = Data) -
         transaction = Transaction
     },
 
-    ok = nifi_s2s_transaction_statem:send(Transaction, Packet, undefined),
+    ok = nifi_s2s_transaction_statem:send(Transaction, Packet, Flowfile),
     
+    NData = Data#raw_s2s_protocol{from = undefined, transaction = Transaction, transaction_mon_ref = Ref},
 
     Actions = [{reply, From, {ok, Transaction}}],
-    {keep_state_and_data, Actions}.
+    {keep_state, NData, Actions};
+
+ready(info, {'DOWN', MonitorRef, process, Transaction, normal},
+    #raw_s2s_protocol{transaction_mon_ref = MonitorRef, transaction = Transaction} = Data) ->
+
+    NData = Data#raw_s2s_protocol{transaction_mon_ref = undefined,
+     transaction = undefined,
+     from = undefined},
+
+    Actions =
+    case Data#raw_s2s_protocol.from of
+        undefined -> [];
+        _ -> [{reply, Data#raw_s2s_protocol.from, ok}]
+    end,
+    {keep_state, NData, Actions}.
 
 %
 % Helper functions
 %
 
 create_transaction(Peer, ?TRANSFER_DIRECTION_RECEIVE) ->
-    {ok, [], []};
+    {ok, []};
 
 create_transaction(Peer, ?TRANSFER_DIRECTION_SEND) ->
-    ok = nifi_s2s_peer:write_utf(Peer, ?SEND_FLOWFILES),
-
     %org::apache::nifi::minifi::io::CRCStream<SiteToSitePeer> crcstream(peer_.get());
     %  transaction = std::make_shared<Transaction>(direction, crcstream);
     %  known_transactions_[transaction->getUUIDStr()] = transaction;
@@ -371,7 +390,11 @@ create_transaction(Peer, ?TRANSFER_DIRECTION_SEND) ->
     %  logger_->log_trace("Site2Site create transaction %s", transaction->getUUIDStr());
     %  return transaction;
     
-    {ok, _Transaction, _TransactionId} = nifi_s2s_transaction_statem:create(Peer).
+    {ok, {_Pid, _Ref}} = Result = nifi_s2s_transaction_statem:create(Peer),
+
+    ok = nifi_s2s_peer:write_utf(Peer, ?SEND_FLOWFILES),
+
+    Result.
 
 
 version5(#raw_s2s_protocol{batch_count = Bc}, bc, Properties) when Bc > 0 ->

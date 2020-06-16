@@ -9,7 +9,9 @@
 
 -export([get_site_to_site_detail/1,
          create_client/1,
+         close/1,
          transmit_payload/3,
+         transfer_flowfiles/2,
          transfer/3]).
 
 create_raw_socket(#{host := Host, port := Port, portId := PortId}) ->
@@ -44,6 +46,10 @@ create_client(#{client_type := raw} = S2SConfig) ->
     create_raw_socket(S2SConfig).
 
 
+close(Pid) ->
+    nifi_s2s_raw_protocol_statem:stop(Pid).
+
+
 % 1. A client initiates Site-to-Site protocol by sending a HTTP(S) request to the
 % specified remote URL to get remote cluster Site-to-Site information.
 % Specifically, to '/nifi-api/site-to-site'. This request is called SiteToSiteDetail.
@@ -56,9 +62,8 @@ get_site_to_site_detail(_Url) ->
 %% @doc Transfers flow file to server.
 %% @end
 transfer_flowfiles(Pid, Flowfile) ->
-    Attributes = nifi_flowfile:get_attributes(Flowfile),
     {ok, Transaction} = 
-        nifi_s2s_raw_protocol_statem:transfer_flowfile(Pid, Flowfile, Attributes),
+        nifi_s2s_raw_protocol_statem:transfer_flowfile(Pid, Flowfile),
 
     ok = nifi_s2s_transaction_statem:confirm(Transaction).
 
