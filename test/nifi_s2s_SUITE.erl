@@ -20,7 +20,8 @@
 groups() ->
     [
         {raw, [], [
-            connect_disconnect
+            connect_disconnect,
+            transfer_payload
         ]}
     ].
 
@@ -31,7 +32,7 @@ all() ->
 
 
 suite() ->
-    [{timetrap, {seconds, 25}}].
+    [{timetrap, {seconds, 45}}].
 
 
 init_per_suite(Config) ->
@@ -72,6 +73,24 @@ connect_disconnect(_Config) ->
     {ok, _Pid} = nifi_s2s:create_client(S2SConfig),
 
     ct:sleep(5000),
+
+    ok.
+
+
+transfer_payload() ->
+    [].
+
+transfer_payload(_Config) ->
+    S2SConfig = #{host => "localhost",
+     port => 9001,
+     client_type => raw, portId => "8f7630f3-0172-1000-8f82-0a81a44f3d30"},
+
+    {ok, Pid} = nifi_s2s:create_client(S2SConfig),
+
+    Payload = <<"Test Nifi Payload">>,
+    %Attributes = #{ <<"TEST1">> => <<"Test">>},
+    Attributes = #{},
+    ok = nifi_s2s:transmit_payload(Pid, Payload, Attributes),
 
     ok.
 

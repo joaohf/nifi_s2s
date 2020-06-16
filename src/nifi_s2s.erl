@@ -9,7 +9,8 @@
 
 -export([get_site_to_site_detail/1,
          create_client/1,
-         transmit_payload/3]).
+         transmit_payload/3,
+         transfer/3]).
 
 create_raw_socket(#{host := Host, port := Port, portId := PortId}) ->
     Ifc = "lo0",
@@ -51,6 +52,34 @@ create_client(#{client_type := raw} = S2SConfig) ->
 get_site_to_site_detail(_Url) ->
     #{host => "localhost", port => 9001, client_type => raw}.
 
+
+%% @doc Transfers flow file to server.
+%% @end
+transfer_flowfiles(Pid, Flowfile) ->
+    Attributes = nifi_flowfile:get_attributes(Flowfile),
+    {ok, Transaction} = 
+        nifi_s2s_raw_protocol_statem:transfer_flowfile(Pid, Flowfile, Attributes),
+
+    ok = nifi_s2s_transaction_statem:confirm(Transaction).
+
+
+%% @doc Receive flow file from server.
+%% @end
+receive_flowfiles(_Pid, _Flowfile) ->
+    ok.
+
+
+%% @doc Transfers flow files
+%% @end
+transfer(_Pid, send, _Flowfile) ->
+    transfer_flowfiles(_Pid, _Flowfile);
+
+transfer(_Pid, 'receive', _Flowfile) ->
+    receive_flowfiles(_Pid, _Flowfile).
+
+
+%% @doc Transfers raw data and attributes to server.
+%% @end
 
 -spec transmit_payload(Pid :: pid(), Payload :: binary(), Attributes :: map()) -> boolean().
 

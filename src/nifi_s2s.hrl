@@ -92,6 +92,10 @@
 -define(SUPPORTED_VERSION, [5, 4, 3, 2, 1]).
 -define(SUPPORTED_CODEC_VERSION, [1]).
 
+% Respond Code Sequence Pattern
+-define(CODE_SEQUENCE_VALUE_1, $R).
+-define(CODE_SEQUENCE_VALUE_2, $C).
+
 %
 % Resource Negotiated Status Code
 %
@@ -138,23 +142,12 @@
 -define(UNRECOGNIZED_RESPONSE_CODE, 254).
 -define(END_OF_STREAM, 255).
 
-
-
-%// Request Type
-%typedef enum {
-%  NEGOTIATE_FLOWFILE_CODEC = 0,
-%  REQUEST_PEER_LIST,
-%  SEND_FLOWFILES,
-%  RECEIVE_FLOWFILES,
-%  SHUTDOWN,
-%  MAX_REQUEST_TYPE
-%} RequestType;
-
+% Request Type
 %const char *SiteToSiteRequest::RequestTypeStr[MAX_REQUEST_TYPE] = {
 -define(NEGOTIATE_FLOWFILE_CODEC, <<"NEGOTIATE_FLOWFILE_CODEC">>).
 -define(REQUEST_PEER_LIST, <<"REQUEST_PEER_LIST">>).
-%    "SEND_FLOWFILES",
-%    "RECEIVE_FLOWFILES", 
+-define(SEND_FLOWFILES, <<"SEND_FLOWFILES">>).
+-define(RECEIVE_FLOWFILES, <<"RECEIVE_FLOWFILES">>).
 -define(SHUTDOWN, <<"SHUTDOWN">>).
 
 %/**

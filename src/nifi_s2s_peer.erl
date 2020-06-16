@@ -4,7 +4,10 @@
 %%%-------------------------------------------------------------------
 -module(nifi_s2s_peer).
 
--export([new/2, new/3, open/1, close/1, write_utf/2, write/2, read/2, get_url/1]).
+-export([new/2, new/3, open/1, close/1,
+    write_utf/2, write/2,
+    read_utf/1, read/2,
+    get_url/1]).
 
 -include("nifi_s2s.hrl").
 
@@ -38,7 +41,9 @@ new(Host, Port, Ifc) ->
 
 
 open(#s2s_peer{host = Host, port = Port} = Peer) ->
-    SocketOpts = [binary, {active, once}],
+    Sndsize = 256 * 1024,
+
+    SocketOpts = [binary, {active, once}, {nodelay, true}, {sndbuf, Sndsize}],
     case gen_tcp:connect(Host, Port, SocketOpts) of
        {ok, Socket} ->
            ok = write(Socket, ?MAGIC_BYTES),
@@ -74,5 +79,11 @@ write(Socket, Packet) ->
     gen_tcp:send(Socket, Packet).
 
 
-read(Socket, Size) ->
+read_utf(#s2s_peer{stream = Socket}) ->
+    {ok, <<Len:16/integer-big>>} = gen_tcp:recv(Socket, 2),
+    {ok, String} = gen_tcp:recv(Socket, Len),
+    String.
+
+
+read(#s2s_peer{stream = Socket}, Size) ->
     gen_tcp:recv(Socket, Size).

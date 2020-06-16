@@ -6,9 +6,21 @@
 
 -behaviour(gen_statem).
 
--export([start_link/2, stop/1, get_peer_list/1, transmit_payload/3]).
--export([callback_mode/0, init/1, terminate/3]).
--export([idle/3, established/3, handshaked/3, get_peer_list/3, ready/3]).
+-export([start_link/2,
+         stop/1,
+         get_peer_list/1,
+         transmit_payload/3,
+         transfer_flowfile/2]).
+
+-export([callback_mode/0,
+         init/1,
+         terminate/3]).
+
+-export([idle/3,
+         established/3,
+         handshaked/3,
+         get_peer_list/3,
+         ready/3]).
 
 -include("nifi_s2s.hrl").
 
@@ -77,13 +89,15 @@ stop(Client) ->
 %% @end
 %%
 get_peer_list(Pid) ->
-    % TODO: remove this
-    timer:sleep(5000),
     gen_statem:call(Pid, {get_peer_list, []}).
 
 
 transmit_payload(Pid, Payload, Attributes) ->
     gen_statem:call(Pid, {transmit_payload, Payload, Attributes}).
+
+
+transfer_flowfile(Pid, Flowfile) ->
+    gen_statem:call(Pid, {transfer_flowfile, Flowfile}).
 
 %% gen_statem callbacks
 
@@ -100,6 +114,21 @@ init({Client, Mode}) ->
     },
     Actions = [{next_event, internal, establish}],
     {ok, idle, Data, Actions}.
+
+
+terminate(normal, ready, #raw_s2s_protocol{client = #client{peer = Peer}}) ->
+    %% writeRequestType(SHUTDOWN);
+
+    %%  known_transactions_.clear();
+
+    ok = nifi_s2s_peer:write_utf(Peer, ?SHUTDOWN),
+    
+    _ = nifi_s2s_peer:close(Peer),
+
+    ok;
+
+terminate(_, _, _Data) ->
+    ok.
 
 
 idle(enter, idle, _Data) ->
@@ -126,8 +155,8 @@ idle(enter, _OldState, #raw_s2s_protocol{client = Client} = Data) ->
     Actions = [{next_event, internal, establish}],
     {keep_state, idle, NData, Actions};
 
-idle({call, From}, {get_peer_list, []}, #raw_s2s_protocol{}) ->
-    Actions = [{reply, From, {error, idle}}],
+idle({call, _From}, {get_peer_list, []}, #raw_s2s_protocol{}) ->
+    Actions = [postpone],
     {keep_state_and_data, Actions};
 
 idle(internal, establish, #raw_s2s_protocol{client = Client} = Data) ->
@@ -156,8 +185,8 @@ established(internal, initiate_resource_negotiation, Data) ->
 
     {keep_state, Data};
 
-established({call, From}, {get_peer_list, []}, #raw_s2s_protocol{}) ->
-    Actions = [{reply, From, {error, disconnected}}],
+established({call, _From}, _, #raw_s2s_protocol{}) ->
+    Actions = [postpone],
     {keep_state_and_data, Actions};
 
 established(info, {tcp, Socket, Packet}, #raw_s2s_protocol{client = #client{peer = #s2s_peer{stream = Socket}}} = Data) ->
@@ -218,8 +247,6 @@ handshaked(info, {tcp, Socket, Packet}, #raw_s2s_protocol{client = #client{peer 
         'PROPERTIES_OK' ->
             case Mode of
                 peer_list ->
-                    %keep_state_and_data;
-                    %Actions = [{next_event, internal, negotiate_codec}],
                     {next_state, get_peer_list, Data};
                 peer ->
                     Actions = [{next_event, internal, negotiate_codec}],
@@ -235,12 +262,8 @@ handshaked(info, {tcp, Socket, Packet}, #raw_s2s_protocol{client = #client{peer 
             {stop, RespondCode}
     end;
 
-handshaked({call, From}, {get_peer_list, []}, #raw_s2s_protocol{} = Data) ->
-
-    {keep_state, Data#raw_s2s_protocol{from = From}};
-
-handshaked({call, From}, {get_peer_list, []}, #raw_s2s_protocol{}) ->
-    Actions = [{reply, From, {error, disconnected}}],
+handshaked({call, _From}, _, #raw_s2s_protocol{}) ->
+    Actions = [postpone],
     {keep_state_and_data, Actions}.
 
 
@@ -248,7 +271,6 @@ get_peer_list(enter, handshaked, _Data) ->
     keep_state_and_data;
 
 get_peer_list({call, From}, {get_peer_list, []}, #raw_s2s_protocol{} = Data) ->
-
     ok = nifi_s2s_peer:write_utf(Data#raw_s2s_protocol.client#client.peer, ?REQUEST_PEER_LIST),
 
     ok = inet:setopts(Data#raw_s2s_protocol.client#client.peer#s2s_peer.stream, [{active, once}]),
@@ -298,8 +320,9 @@ ready(info, {tcp, Socket, Packet}, #raw_s2s_protocol{client = #client{peer = #s2
     end;
 
 ready({call, From}, {transmit_payload, Payload, Attributes}, #raw_s2s_protocol{} = Data) ->
+    Peer = Data#raw_s2s_protocol.client#client.peer,
 
-    {ok, Transaction, TransactionId} = nifi_s2s_client:create_transaction(?TRANSFER_DIRECTION_SEND),
+    {ok, Transaction, _TransactionId} = create_transaction(Peer, ?TRANSFER_DIRECTION_SEND),
 
     Packet = #data_packet{
         payload = Payload,
@@ -307,30 +330,49 @@ ready({call, From}, {transmit_payload, Payload, Attributes}, #raw_s2s_protocol{}
         transaction = Transaction
     },
 
-    ok = nifi_s2s_client:send(Data#raw_s2s_protocol.client, Packet),
+    ok = nifi_s2s_transaction_statem:send(Transaction, Packet, undefined),
 
-    ok = nifi_s2s_client:delete_transaction(TransactionId),
+    ok = nifi_s2s_transaction_statem:confirm(Transaction),
 
-    keep_state_and_data.
+    Actions = [{reply, From, ok}],
+    {keep_state_and_data, Actions};
 
+ready({call, From}, {transfer_flowfile, Flowfile}, #raw_s2s_protocol{} = Data) ->
+    Peer = Data#raw_s2s_protocol.client#client.peer,
 
-terminate(normal, ready, #raw_s2s_protocol{client = #client{peer = Peer}}) ->
-    %% writeRequestType(SHUTDOWN);
+    {ok, Transaction, _TransactionId} = create_transaction(Peer, ?TRANSFER_DIRECTION_SEND),
 
-    %%  known_transactions_.clear();
+    Packet = #data_packet{
+        payload = undefined,
+        attributes = nifi_flowfile:get_attributes(Flowfile),
+        transaction = Transaction
+    },
 
-    ok = nifi_s2s_peer:write_utf(Peer, ?SHUTDOWN),
+    ok = nifi_s2s_transaction_statem:send(Transaction, Packet, undefined),
     
-    _ = nifi_s2s_peer:close(Peer),
 
-    ok;
-
-terminate(_, _, _Data) ->
-    ok.
+    Actions = [{reply, From, {ok, Transaction}}],
+    {keep_state_and_data, Actions}.
 
 %
 % Helper functions
 %
+
+create_transaction(Peer, ?TRANSFER_DIRECTION_RECEIVE) ->
+    {ok, [], []};
+
+create_transaction(Peer, ?TRANSFER_DIRECTION_SEND) ->
+    ok = nifi_s2s_peer:write_utf(Peer, ?SEND_FLOWFILES),
+
+    %org::apache::nifi::minifi::io::CRCStream<SiteToSitePeer> crcstream(peer_.get());
+    %  transaction = std::make_shared<Transaction>(direction, crcstream);
+    %  known_transactions_[transaction->getUUIDStr()] = transaction;
+    %  transactionID = transaction->getUUIDStr();
+    %  logger_->log_trace("Site2Site create transaction %s", transaction->getUUIDStr());
+    %  return transaction;
+    
+    {ok, _Transaction, _TransactionId} = nifi_s2s_transaction_statem:create(Peer).
+
 
 version5(#raw_s2s_protocol{batch_count = Bc}, bc, Properties) when Bc > 0 ->
     maps:put(?BATCH_COUNT, integer_to_binary(Bc), Properties);
