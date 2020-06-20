@@ -13,6 +13,8 @@ get_lineage_start_date/1,
 get_entry_date/1,
 get_id/1]).
 
+-include("nifi_s2s.hrl").
+
 -record(flowfile, {
     content :: binary(),
     size :: non_neg_integer(),
@@ -22,6 +24,12 @@ get_id/1]).
 
 new() ->
     new(#{}, <<>>).
+
+new([]) ->
+    [];
+
+new(Packets) when is_list(Packets)->
+    [ new(Packet#data_packet.attributes, Packet#data_packet.payload) || Packet <- Packets ];
 
 new(Content) ->
     new(#{}, Content).

@@ -154,7 +154,7 @@
 % * An enumeration for specifying the direction in which data should be
 % * transferred between a client and a remote NiFi instance.
 % */
--define(TRANSFER_DIRECTION_SEND, 0).
--define(TRANSFER_DIRECTION_RECEIVE, 1).
+-define(TRANSFER_DIRECTION_SEND, 'send').
+-define(TRANSFER_DIRECTION_RECEIVE, 'receive').
 
 -endif.

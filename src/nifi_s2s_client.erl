@@ -2,7 +2,9 @@
 
 -export([new/2, decides_which_peer/1]).
 
--export([writeResponse/2, writeResponse/3, readResponse/1]).
+-export([write_response/2,
+         write_response/3,
+         read_response/1]).
 
 -include("nifi_s2s.hrl").
 
@@ -29,16 +31,16 @@ decides_which_peer([Peer | _Peers]) ->
     {ok, Peer}.
 
 
-writeResponse(Peer, Code) ->
+write_response(Peer, Code) ->
    nifi_s2s_peer:write(Peer, <<$R, $C, Code:8/integer>>).
 
 
-writeResponse(Peer, Code, Description)  when byte_size(Description) =< 65535 ->
+write_response(Peer, Code, Description)  when byte_size(Description) =< 65535 ->
    Len = byte_size(Description),
    nifi_s2s_peer:write(Peer, <<$R, $C, Code:8/integer, Len:16/integer-big, Description/binary>>).
 
 
-readResponse(Peer) ->
+read_response(Peer) ->
    {ok, Packet} = nifi_s2s_peer:read(Peer, 3),
    decode_response_code(Peer, Packet).
 
@@ -55,7 +57,7 @@ decode_response_code(Peer, <<?CODE_SEQUENCE_VALUE_1, ?CODE_SEQUENCE_VALUE_2,
 
 
 decode_response_code(?CONTINUE_TRANSACTION) ->
-    {'CONTINUE_TRANSACTION', true};
+    'CONTINUE_TRANSACTION';
 
 decode_response_code(?FINISH_TRANSACTION) ->
     'FINISH_TRANSACTION';
@@ -74,4 +76,10 @@ decode_response_code(?CANCEL_TRANSACTION) ->
     {'CANCEL_TRANSACTION', true};
 
 decode_response_code(?BAD_CHECKSUM) ->
-    'BAD_CHECKSUM'.
+    'BAD_CHECKSUM';
+
+decode_response_code(?MORE_DATA) ->
+    'MORE_DATA';
+
+decode_response_code(?NO_MORE_DATA) ->
+    'NO_MORE_DATA'.

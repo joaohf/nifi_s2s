@@ -12,7 +12,7 @@
          close/1,
          transmit_payload/3,
          transfer_flowfiles/2,
-         transfer/3]).
+         receive_flowfiles/1]).
 
 create_raw_socket(#{host := Host, port := Port, portId := PortId}) ->
     Ifc = "lo0",
@@ -70,17 +70,8 @@ transfer_flowfiles(Pid, Flowfile) ->
 
 %% @doc Receive flow file from server.
 %% @end
-receive_flowfiles(_Pid, _Flowfile) ->
-    ok.
-
-
-%% @doc Transfers flow files
-%% @end
-transfer(_Pid, send, _Flowfile) ->
-    transfer_flowfiles(_Pid, _Flowfile);
-
-transfer(_Pid, 'receive', _Flowfile) ->
-    receive_flowfiles(_Pid, _Flowfile).
+receive_flowfiles(Pid) ->
+    {ok, _FlowFile} = nifi_s2s_raw_protocol_statem:receive_flowfiles(Pid).
 
 
 %% @doc Transfers raw data and attributes to server.

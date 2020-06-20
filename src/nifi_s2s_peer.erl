@@ -6,7 +6,8 @@
 
 -export([new/2, new/3, open/1, close/1,
     write_utf/2, write/2,
-    read_utf/1, read/2,
+    read_utf/1, read_utf/2, read_utf/3,
+    read/2,
     get_url/1]).
 
 -include("nifi_s2s.hrl").
@@ -80,9 +81,27 @@ write(Socket, Packet) ->
 
 
 read_utf(#s2s_peer{stream = Socket}) ->
+    read_utf(#s2s_peer{stream = Socket}, false).
+
+read_utf(#s2s_peer{stream = Socket}, false) ->
     {ok, <<Len:16/integer-big>>} = gen_tcp:recv(Socket, 2),
+    case Len of
+        0 ->
+            <<>>;
+        _ ->
+            {ok, String} = gen_tcp:recv(Socket, Len),
+            String
+    end;
+
+read_utf(#s2s_peer{stream = Socket}, true) ->
+    {ok, <<Len:32/integer-big>>} = gen_tcp:recv(Socket, 4),
     {ok, String} = gen_tcp:recv(Socket, Len),
     String.
+
+read_utf(#s2s_peer{stream = Socket}, true, true) ->
+    {ok, <<Len:32/integer-big>>} = gen_tcp:recv(Socket, 4),
+    {ok, String} = gen_tcp:recv(Socket, Len),
+    {String, <<Len:32/integer-big, String/binary>>}.
 
 
 read(#s2s_peer{stream = Socket}, Size) ->
