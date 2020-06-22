@@ -27,7 +27,6 @@ decides_which_peer([]) ->
     {error, no_peer};
 
 decides_which_peer([Peer | _Peers]) ->
-    ct:pal("ppppp ~p", [Peer]),
     {ok, Peer}.
 
 

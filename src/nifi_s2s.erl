@@ -3,21 +3,27 @@
 
 -include("nifi_s2s.hrl").
 
--type client_type() :: raw.
+-type scheme() :: string().
+-type transport_protocol() :: raw | http.
 
--export_type([client_type/0]).
+-type s2s_config() :: #{scheme => scheme(),
+                         hostname => string(),
+                         port => non_neg_integer(),
+                         transport_protocol => transport_protocol(),
+                         local_network_interface => string(),
+                         direction => 'send' | 'receive'}.
 
--export([get_site_to_site_detail/1,
-         create_client/1,
+-export_type([s2s_config/0, transport_protocol/0]).
+
+-export([create_client/1,
          close/1,
          transmit_payload/3,
          transfer_flowfiles/2,
          receive_flowfiles/1]).
 
-create_raw_socket(#{host := Host, port := Port, portId := PortId}) ->
-    Ifc = "lo0",
 
-    Peer = nifi_s2s_peer:new(Host, Port, "lo0"),
+create_raw_socket(#{host := Host, port := Port, port_id := PortId, local_network_interface := Ifc}) ->
+    Peer = nifi_s2s_peer:new(Host, Port, Ifc),
 
     Client = nifi_s2s_client:new(PortId, Peer),
 
@@ -38,12 +44,25 @@ create_raw_socket(#{host := Host, port := Port, portId := PortId}) ->
 
     NClient = nifi_s2s_client:new(PortId, nifi_s2s_peer:new(NewPeer, Ifc)),
 
+    {ok, NClient}.
+    
+
+create_client(#{transport_protocol := raw = TransportProtocol} = S2SConfig) ->
+    {ok, #{host := PeerHost, port := PeerPort, secure := Secure}} = refresh_peer_list(S2SConfig),
+
+    PortId = maps:get(port_id, S2SConfig),
+    Ifc = maps:get(local_network_interface, S2SConfig),
+    NS2SConfig = #{host => PeerHost,
+                  port => PeerPort,
+                  secure => Secure,
+                  transport_protocol => TransportProtocol,
+                  local_network_interface => Ifc,
+                  port_id => PortId},
+
+    {ok, Peer} = create_raw_socket(NS2SConfig),
+
     % 6. Connect to remote Peer
-    {ok, _Pid} = nifi_s2s_raw_protocol_statem:start_link(NClient, peer).
-
-
-create_client(#{client_type := raw} = S2SConfig) ->
-    create_raw_socket(S2SConfig).
+    nifi_s2s_raw_protocol_statem:start_link(Peer, peer).
 
 
 close(Pid) ->
@@ -55,8 +74,49 @@ close(Pid) ->
 % Specifically, to '/nifi-api/site-to-site'. This request is called SiteToSiteDetail.
 % 2. A remote NiFi node responds with its input and output ports, and TCP port numbers
 % for RAW and TCP transport protocols.
-get_site_to_site_detail(_Url) ->
-    #{host => "localhost", port => 9001, client_type => raw}.
+get_site_to_site_detail(Url) ->
+    UriMap = uri_string:parse(Url),
+    WithPath = maps:put(path, "/nifi-api/site-to-site", UriMap),
+
+    FullUrl = uri_string:recompose(WithPath),
+
+    Response = httpc:request(get, {FullUrl, []}, [], [{body_format, binary}]),
+    {ok, Port, Secure} = parse_detail(Response),
+
+    Host = maps:get(host, UriMap),
+
+    {ok, #{host => Host, port => Port, secure => Secure}}.
+
+
+parse_detail({ok, {{_, 200, _}, Headers, Body}}) ->
+    ContentType = proplists:get_value("content-type", Headers),
+    ContentLength = proplists:get_value("content-length", Headers),
+
+    case {ContentType, ContentLength} of
+        {"application/json", Cl} when Cl > 0 ->
+            make_site_to_site_config(jsx:decode(Body));
+        {_, _} ->
+            erlang:error(invalid_site_to_site)
+    end.
+
+make_site_to_site_config(List) ->
+    Controller = proplists:get_value(<<"controller">>, List, []),
+    Port = proplists:get_value(<<"remoteSiteListeningPort">>, Controller),
+    Secure = proplists:get_value(<<"siteToSiteSecure">>, Controller),
+
+    {ok, Port, Secure}.
+
+
+refresh_peer_list(S2SConfig) ->
+    Url = make_url(S2SConfig),
+    get_site_to_site_detail(Url).
+
+
+make_url(#{scheme := Scheme, hostname := Host, port := Port}) ->
+    lists:flatten([Scheme, "://", Host, ":", integer_to_list(Port)]);
+
+make_url(#{hostname := _Host, port := _Port} = M) ->
+    make_url(maps:put(scheme, "http", M)).
 
 
 %% @doc Transfers flow file to server.

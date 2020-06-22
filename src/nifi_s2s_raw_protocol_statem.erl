@@ -340,7 +340,7 @@ ready({call, From}, {transmit_payload, Payload, Attributes}, #raw_s2s_protocol{}
     ok = nifi_s2s_transaction_statem:confirm(Transaction),
 
     NData = Data#raw_s2s_protocol{from = From,
-     transaction = Transaction,
+     transaction = {?TRANSFER_DIRECTION_SEND, Transaction},
      transaction_mon_ref = Ref},
 
     {keep_state, NData};

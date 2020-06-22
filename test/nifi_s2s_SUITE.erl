@@ -38,7 +38,12 @@ suite() ->
 
 
 init_per_suite(Config) ->
-    Config.
+    {ok, _} = application:ensure_all_started(inets),
+    {ok, _} = application:ensure_all_started(jsx),
+
+    % output_port and input_port are nifi port processors
+    [{output_port, "c62bad66-0172-1000-a957-7ec79ed4f525"},
+     {input_port, "8f7630f3-0172-1000-8f82-0a81a44f3d30"} | Config].
 
 
 end_per_suite(_Config) ->
@@ -67,10 +72,12 @@ end_per_testcase(_TestCase, _Config) ->
 connect_disconnect() ->
     [].
 
-connect_disconnect(_Config) ->
-    S2SConfig = #{host => "localhost",
-     port => 9001,
-     client_type => raw, portId => "8f7630f3-0172-1000-8f82-0a81a44f3d30"},
+connect_disconnect(Config) ->
+    S2SConfig = #{hostname => "localhost",
+                  port => 8080,
+                  transport_protocol => raw,
+                  local_network_interface => "lo0",
+                  port_id => ?config(input_port, Config)},
 
     {ok, _Pid} = nifi_s2s:create_client(S2SConfig),
 
@@ -82,16 +89,18 @@ connect_disconnect(_Config) ->
 transfer_payload() ->
     [].
 
-transfer_payload(_Config) ->
-    S2SConfig = #{host => "localhost",
-     port => 9001,
-     client_type => raw, portId => "8f7630f3-0172-1000-8f82-0a81a44f3d30"},
+transfer_payload(Config) ->
+    S2SConfig = #{hostname => "localhost",
+                  port => 8080,
+                  transport_protocol => raw,
+                  local_network_interface => "lo0",
+                  port_id => ?config(input_port, Config)},
 
     {ok, Pid} = nifi_s2s:create_client(S2SConfig),
 
     Payload = <<"Test Nifi Payload">>,
-    %Attributes = #{ <<"TEST1">> => <<"Test">>},
-    Attributes = #{},
+    Attributes = #{ <<"TEST1">> => <<"Test">>},
+
     ok = nifi_s2s:transmit_payload(Pid, Payload, Attributes),
 
     ok = nifi_s2s:close(Pid),
@@ -102,11 +111,12 @@ transfer_payload(_Config) ->
 transfer_flowfiles() ->
     [].
 
-transfer_flowfiles(_Config) ->
-    S2SConfig = #{host => "localhost",
-     port => 9001,
-     client_type => raw,
-     portId => "8f7630f3-0172-1000-8f82-0a81a44f3d30"},
+transfer_flowfiles(Config) ->
+    S2SConfig = #{hostname => "localhost",
+                  port => 8080,
+                  transport_protocol => raw,
+                  local_network_interface => "lo0",
+                  port_id => ?config(input_port, Config)},
 
     {ok, Pid} = nifi_s2s:create_client(S2SConfig),
 
@@ -125,11 +135,12 @@ transfer_flowfiles(_Config) ->
 receive_flowfiles() ->
     [].
 
-receive_flowfiles(_Config) ->
-    S2SConfig = #{host => "localhost",
-     port => 9001,
-     client_type => raw,
-     portId => "c62bad66-0172-1000-a957-7ec79ed4f525"},
+receive_flowfiles(Config) ->
+    S2SConfig = #{hostname => "localhost",
+                  port => 8080,
+                  transport_protocol => raw,
+                  local_network_interface => "lo0",
+                  port_id => ?config(output_port, Config)},
 
     {ok, Pid} = nifi_s2s:create_client(S2SConfig),
 

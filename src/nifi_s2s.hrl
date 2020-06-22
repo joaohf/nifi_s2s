@@ -77,7 +77,7 @@
 -record(configuration, {
     stream,
     peer :: s2s_peer(),
-    client_type :: nifi_s2s:client_type(),
+    transport_protocol :: nifi_s2s:transport_protocol(),
     local_network_interface :: string(),
     idle_timeout :: non_neg_integer()
 }).
