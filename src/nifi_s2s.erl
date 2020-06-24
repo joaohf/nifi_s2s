@@ -1,26 +1,62 @@
-% https://nifi.apache.org/docs/nifi-docs/html/administration-guide.html#site-to-site-protocol-sequence
+%%%-------------------------------------------------------------------
+%% @doc Main public interface to receive and transfer Flowfiles.
+%% @end
+%%%-------------------------------------------------------------------
 -module(nifi_s2s).
 
 -include("nifi_s2s.hrl").
 
 -type scheme() :: string().
+%% The scheme, one of http or https.
+
 -type transport_protocol() :: raw | http.
+%% The type of client protocol.
 
 -type s2s_config() :: #{scheme => scheme(),
                          hostname => string(),
                          port => non_neg_integer(),
                          transport_protocol => transport_protocol(),
-                         local_network_interface => string(),
-                         direction => 'send' | 'receive'}.
+                         local_network_interface => string()}.
+%% <dl>
+%% <dt>{scheme, Scheme}</dt><dd>http or https.</dd>
+%% <dt>{hostname, Hostname}</dt><dd>The NiFi host to make the initial connection.</dd>
+%% <dt>{port, Port}</dt><dd>The http or https tcp port number.</dd>
+%% <dt>{transport_protocol, Protocol}</dt><dd>The type of the client protocol.</dd>
+%% <dt>{local_network_interface, Ifc}</dt><dd>The network interface to use.</dd>
+%% </dl>
 
--export_type([s2s_config/0, transport_protocol/0]).
+-type client_options() :: [client_option()].
+-type client_option() :: 
+    {timeout, non_neg_integer()} |
+    {batch_count, non_neg_integer()} |
+    {batch_size, non_neg_integer()} |
+    {batch_duration, non_neg_integer()}.
+%% <dl>
+%% <dt>{timeout, Timeout}</dt><dd>Timeout waiting for reply.</dd>
+%% <dt>{batch_count, Value}</dt><dd>Number of flowfiles that server will send.</dd>
+%% <dt>{batch_size, Value}</dt><dd>Maximum number of bytes that the server will send.</dd>
+%% <dt>{batch_duration, Value}</dt><dd>Maximum transfer duration.</dd>
+%% </dl>
+
+-export_type([s2s_config/0,
+              transport_protocol/0,
+              client_options/0,
+              client_option/0]).
 
 -export([create_client/1,
+         create_client/2,
          close/1,
          transmit_payload/3,
          transfer_flowfiles/2,
          receive_flowfiles/1]).
 
+%%%-------------------------------------------------------------------
+%% @doc Creates a raw s2s connection
+%% @end
+%% @private
+%%%-------------------------------------------------------------------
+
+-spec create_raw_socket(s2s_config()) -> {ok, nifi_s2s_client:client()}.
 
 create_raw_socket(#{host := Host, port := Port, port_id := PortId, local_network_interface := Ifc}) ->
     Peer = nifi_s2s_peer:new(Host, Port, Ifc),
@@ -47,7 +83,27 @@ create_raw_socket(#{host := Host, port := Port, port_id := PortId, local_network
     {ok, NClient}.
     
 
-create_client(#{transport_protocol := raw = TransportProtocol} = S2SConfig) ->
+%%%-------------------------------------------------------------------
+%% @doc Creates site-to-site client.
+%% @see create_client/2.
+%% @end
+%%%-------------------------------------------------------------------
+
+-spec create_client(s2s_config()) -> {ok, pid()}.
+
+create_client(S2SConfig) ->
+    create_client(S2SConfig, []).
+
+
+%%%-------------------------------------------------------------------
+%% @doc Creates site-to-site client.
+%% This function will do all the steps as described in <a href="https://nifi.apache.org/docs/nifi-docs/html/administration-guide.html#site-to-site-protocol-sequence">site-to-site-protocol-sequence</a>.
+%% @end
+%%%-------------------------------------------------------------------
+
+-spec create_client(s2s_config(), client_options()) -> {ok, pid()}.
+
+create_client(#{transport_protocol := raw = TransportProtocol} = S2SConfig, Options) ->
     {ok, #{host := PeerHost, port := PeerPort, secure := Secure}} = refresh_peer_list(S2SConfig),
 
     PortId = maps:get(port_id, S2SConfig),
@@ -62,8 +118,16 @@ create_client(#{transport_protocol := raw = TransportProtocol} = S2SConfig) ->
     {ok, Peer} = create_raw_socket(NS2SConfig),
 
     % 6. Connect to remote Peer
-    nifi_s2s_raw_protocol_statem:start_link(Peer, peer).
+    nifi_s2s_raw_protocol_statem:start_link(Peer, peer, Options).
 
+
+%%%-------------------------------------------------------------------
+%% @doc Closes a connection.
+%%      Finishes all pending transaction and sends a shutdown to the peer.
+%% @end
+%%%-------------------------------------------------------------------
+
+-spec close(pid()) -> ok.
 
 close(Pid) ->
     nifi_s2s_raw_protocol_statem:stop(Pid).
@@ -119,8 +183,13 @@ make_url(#{hostname := _Host, port := _Port} = M) ->
     make_url(maps:put(scheme, "http", M)).
 
 
+%%%-------------------------------------------------------------------
 %% @doc Transfers flow file to server.
 %% @end
+%%%-------------------------------------------------------------------
+
+-spec transfer_flowfiles(pid(), nifi_flowfile:flowfiles()) -> ok.
+
 transfer_flowfiles(Pid, Flowfile) ->
     {ok, Transaction} = 
         nifi_s2s_raw_protocol_statem:transfer_flowfile(Pid, Flowfile),
@@ -128,14 +197,21 @@ transfer_flowfiles(Pid, Flowfile) ->
     ok = nifi_s2s_transaction_statem:confirm(Transaction).
 
 
-%% @doc Receive flow file from server.
+%%%-------------------------------------------------------------------
+%% @doc Receives flow file from server.
 %% @end
+%%%-------------------------------------------------------------------
+
+-spec receive_flowfiles(pid()) -> {ok, nifi_flowfile:flowfiles()}.
+
 receive_flowfiles(Pid) ->
     {ok, _FlowFile} = nifi_s2s_raw_protocol_statem:receive_flowfiles(Pid).
 
 
+%%%-------------------------------------------------------------------
 %% @doc Transfers raw data and attributes to server.
 %% @end
+%%%-------------------------------------------------------------------
 
 -spec transmit_payload(Pid :: pid(), Payload :: binary(), Attributes :: map()) -> boolean().
 

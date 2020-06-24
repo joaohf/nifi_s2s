@@ -1,3 +1,8 @@
+%%%-------------------------------------------------------------------
+%% @doc Transaction state machine.
+%% @end
+%% @private
+%%%-------------------------------------------------------------------
 -module(nifi_s2s_transaction_statem).
 
 -behaviour(gen_statem).
@@ -34,7 +39,7 @@
       % Whether received data is available
       data_available = undefined :: boolean() | undefined,
 
-      %  // Transaction Direction TransferDirection
+      % Transaction Direction TransferDirection
       direction :: 'send' | 'receive',
 
       % A global unique identifier
@@ -118,7 +123,7 @@ data_exchanged({call, From}, {receiver, []}, #transaction{data_available = false
 
     {NData, PacketOrEOF} = do_receive(Data),
 
-    Actions = [{reply, From, {ok, eof}}],
+    Actions = [{reply, From, {ok, PacketOrEOF}}],
     {keep_state, NData, Actions};
 
 data_exchanged({call, From}, {receiver, []}, #transaction{data_available = true} = Data) ->
@@ -155,7 +160,7 @@ data_exchanged({call, From}, {confirm, []},
     {next_state, transaction_confirmed, Data#transaction{from = From}, Actions};
 
 data_exchanged({call, From}, {confirm, []},
-    #transaction{peer = Peer, direction = ?TRANSFER_DIRECTION_RECEIVE, data_available = false, current_transfers = 0} = Data) ->
+    #transaction{direction = ?TRANSFER_DIRECTION_RECEIVE, data_available = false, current_transfers = 0} = Data) ->
     Actions = [{next_event, internal, complete}],
     {next_state, transaction_confirmed, Data#transaction{from = From}, Actions};    
 

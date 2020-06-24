@@ -1,12 +1,13 @@
 {application, nifi_s2s,
- [{description, "nifi site 2 site protocol"},
+ [{description, "nifi site-to-site protocol"},
   {vsn, "0.1.0"},
   {registered, []},
   {applications,
    [kernel,
     stdlib,
     inets,
-    jsx
+    jsx,
+    uuid
    ]},
   {env,[]},
   {modules, []},

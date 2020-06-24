@@ -1,12 +1,13 @@
 %%%-------------------------------------------------------------------
 %% @doc Site 2 Site client state machine.
 %% @end
+%% @private
 %%%-------------------------------------------------------------------
 -module(nifi_s2s_raw_protocol_statem).
 
 -behaviour(gen_statem).
 
--export([start_link/2,
+-export([start_link/2, start_link/3,
          stop/1,
          get_peer_list/1,
          transmit_payload/3,
@@ -82,7 +83,10 @@
 
 
 start_link(Client, Mode) ->
-    gen_statem:start_link(?MODULE, {Client, Mode}, []).
+    gen_statem:start_link(?MODULE, {Client, Mode, []}, []).
+
+start_link(Client, Mode, Options) ->
+    gen_statem:start_link(?MODULE, {Client, Mode, Options}, []).
 
 
 stop(Client) ->
@@ -100,8 +104,8 @@ transmit_payload(Pid, Payload, Attributes) ->
     gen_statem:call(Pid, {transmit_payload, Payload, Attributes}).
 
 
-transfer_flowfile(Pid, Flowfile) ->
-    gen_statem:call(Pid, {transfer_flowfile, Flowfile}).
+transfer_flowfile(Pid, Flowfiles) ->
+    gen_statem:call(Pid, {transfer_flowfile, Flowfiles}).
 
 
 receive_flowfiles(Pid) ->
@@ -111,13 +115,13 @@ receive_flowfiles(Pid) ->
 
 callback_mode() -> [state_functions, state_enter].
 
-init({Client, Mode}) ->
+init({Client, Mode, Opts}) ->
     Data = #raw_s2s_protocol{
         mode = Mode,
-        batch_count = 0,
-        batch_size = 0,
-        batch_duration = 0,
-        timeout = 30000,
+        batch_count = proplists:get_value(batch_count, Opts, 0),
+        batch_size = proplists:get_value(batch_size, Opts, 0),
+        batch_duration = proplists:get_value(batch_duration, Opts, 0),
+        timeout = proplists:get_value(timeout, Opts, 30000),
         client = Client
     },
     Actions = [{next_event, internal, establish}],
@@ -211,19 +215,15 @@ established(info, {tcp, Socket, Packet}, #raw_s2s_protocol{client = #client{peer
 handshaked(enter, established, _Data) -> keep_state_and_data;
 
 handshaked(internal, handshake, Data) ->
-    CommsIdentifier = nifi_s2s_utils:uuid(),
+    CommsIdentifier = uuid:get_v4(),
 
     ok = nifi_s2s_peer:write_utf(Data#raw_s2s_protocol.client#client.peer, CommsIdentifier),
 
-    PropertiesVersion = 
-    case Data#raw_s2s_protocol.client#client.currentVersion of
-        Version when Version >= 5 ->
-          M0 = version5(Data, bs, #{}),
-          M1 = version5(Data, bc, M0), 
-          version5(Data, bd, M1);
-        _Version ->
-          #{}
-    end,
+    Version = Data#raw_s2s_protocol.client#client.currentVersion,
+
+    M0 = protocol_version(Version, Data, ?BATCH_COUNT, #{}),
+    M1 = protocol_version(Version, Data, ?BATCH_DURATION, M0),
+    M2 = protocol_version(Version, Data, ?BATCH_SIZE, M1),
 
     PropertiesBase = #{
         ?GZIP => <<"false">>,
@@ -231,7 +231,7 @@ handshaked(internal, handshake, Data) ->
         ?REQUEST_EXPIRATION_MILLIS => integer_to_binary(Data#raw_s2s_protocol.timeout)
      },
 
-    Properties = maps:merge(PropertiesBase, PropertiesVersion),
+    Properties = maps:merge(PropertiesBase, M2),
 
     ok = nifi_s2s_peer:write_utf(Data#raw_s2s_protocol.client#client.peer,
         Data#raw_s2s_protocol.client#client.peer#s2s_peer.url),
@@ -330,8 +330,7 @@ ready({call, From}, {transmit_payload, Payload, Attributes}, #raw_s2s_protocol{}
 
     Packet = #data_packet{
         payload = Payload,
-        attributes = Attributes,
-        transaction = Transaction
+        attributes = Attributes
     },
 
     ok = nifi_s2s_transaction_statem:send(Transaction, Packet, undefined),
@@ -345,18 +344,12 @@ ready({call, From}, {transmit_payload, Payload, Attributes}, #raw_s2s_protocol{}
 
     {keep_state, NData};
 
-ready({call, From}, {transfer_flowfile, Flowfile}, #raw_s2s_protocol{} = Data) ->
+ready({call, From}, {transfer_flowfile, Flowfiles}, #raw_s2s_protocol{} = Data) ->
     Peer = Data#raw_s2s_protocol.client#client.peer,
 
     {ok, {Transaction, Ref}} = create_transaction(Peer, ?TRANSFER_DIRECTION_SEND),
 
-    Packet = #data_packet{
-        payload = undefined,
-        attributes = nifi_flowfile:get_attributes(Flowfile),
-        transaction = Transaction
-    },
-
-    ok = nifi_s2s_transaction_statem:send(Transaction, Packet, Flowfile),
+    ok = do_send(Transaction, Flowfiles),
     
     NData = Data#raw_s2s_protocol{from = undefined,
      transaction = {?TRANSFER_DIRECTION_SEND, Transaction},
@@ -378,9 +371,7 @@ ready({call, From}, {receive_flowfiles, []}, #raw_s2s_protocol{} = Data) ->
             nifi_s2s_transaction_statem:set_data_available(Transaction, false)
     end,
     
-    Packets = do_receiver(Transaction),
-
-    Flowfiles = nifi_flowfile:new(Packets),
+    Flowfiles = do_receiver(Transaction),
 
     % confirm includes complete
     ok = nifi_s2s_transaction_statem:confirm(Transaction),
@@ -411,14 +402,36 @@ ready(info, {'DOWN', MonitorRef, process, Transaction, normal},
 % Helper functions
 %
 
+%% Send flowfiles
+do_send(_Transaction, {empty, _Flowfiles}) ->
+    ok;
+
+do_send(Transaction, {{value, Flowfile}, Flowfiles}) ->
+    Packet = #data_packet{
+        payload = undefined,
+        attributes = nifi_flowfile:get_attributes(Flowfile)
+    },
+
+    ok = nifi_s2s_transaction_statem:send(Transaction, Packet, Flowfile),
+
+    do_send(Transaction, nifi_flowfile:remove(Flowfiles));
+
+do_send(Transaction, Flowfiles) ->
+    do_send(Transaction, nifi_flowfile:remove(Flowfiles)).
+
+
+%% Receive data packets and build flowfiles
 do_receiver(Transaction) ->
-    do_receiver(Transaction, nifi_s2s_transaction_statem:receiver(Transaction), []).
+    do_receiver(Transaction, nifi_s2s_transaction_statem:receiver(Transaction),
+        nifi_flowfile:new()).
 
 do_receiver(_Transaction, {ok, eof}, AccIn) ->
     AccIn;
     
-do_receiver(Transaction, {ok, Packet}, AccIn) ->
-    do_receiver(Transaction, nifi_s2s_transaction_statem:receiver(Transaction), [Packet | AccIn]).
+do_receiver(Transaction, {ok, #data_packet{attributes = Att, payload = Payload}}, AccIn) ->
+    Flowfile = nifi_flowfile:new(Att, Payload),
+    do_receiver(Transaction, nifi_s2s_transaction_statem:receiver(Transaction),
+        nifi_flowfile:add(Flowfile, AccIn)).
 
 
 write_request_type(Peer, Type) ->
@@ -440,26 +453,20 @@ create_transaction(Peer, ?TRANSFER_DIRECTION_SEND) ->
     Result.
 
 
-version5(#raw_s2s_protocol{batch_count = Bc}, bc, Properties) when Bc > 0 ->
-    maps:put(?BATCH_COUNT, integer_to_binary(Bc), Properties);
+protocol_version(5, #raw_s2s_protocol{batch_count = Value}, ?BATCH_COUNT = Key, Map) when Value > 0 ->
+    maps:put(Key, integer_to_binary(Value), Map);
 
-version5(#raw_s2s_protocol{}, bc, Properties) ->
-    Properties;
+protocol_version(5, #raw_s2s_protocol{batch_size = Value}, ?BATCH_SIZE = Key, Map) when Value > 0 ->
+    maps:put(Key, integer_to_binary(Value), Map);
 
-version5(#raw_s2s_protocol{batch_size = Bs}, bs, Properties) when Bs > 0 ->
-    maps:put(?BATCH_SIZE, integer_to_binary(Bs), Properties);
+protocol_version(5, #raw_s2s_protocol{batch_duration = Value}, ?BATCH_DURATION = Key, Map) when Value > 0 ->
+    maps:put(Key, integer_to_binary(Value), Map);
 
-version5(#raw_s2s_protocol{}, bs, Properties) ->
-    Properties;
-
-version5(#raw_s2s_protocol{batch_duration = Bd}, bd, Properties) when Bd > 0 ->
-    maps:put(?BATCH_DURATION, integer_to_binary(Bd), Properties);
-
-version5(#raw_s2s_protocol{}, bd, Properties) ->
-    Properties.
+protocol_version(_, #raw_s2s_protocol{}, _, Map) ->
+    Map.
 
 
-write_url(Peer, CurrentVersion) when CurrentVersion >=3 ->
+write_url(Peer, CurrentVersion) when CurrentVersion >= 3 ->
     Url = nifi_s2s_peer:get_url(Peer),
     nifi_s2s_peer:write(Peer, Url);
 

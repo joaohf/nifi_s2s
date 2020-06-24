@@ -1,15 +1,11 @@
 -ifndef(nifi_s2s).
 -define(nifi_s2s, true).
 
-%/**
-% * Represents a piece of data that is to be sent to or that was received from a
-% * NiFi instance.
-% */
+% Represents a piece of data that is to be sent to or that was received from a NiFi instance.
 -record(data_packet, {
     size :: non_neg_integer(),
     payload :: binary(),
-    attributes :: map(),
-    transaction :: any()
+    attributes :: map()
 }).
 
 -record(peer, {
@@ -42,8 +38,7 @@
     % Yield Expiration per destination PortID
     yield_expiration_PortIdMap :: non_neg_integer(),
 
-
-    % ?? data stream
+    % data stream
     stream :: any()
 }).
 
@@ -57,14 +52,8 @@
     % Peer Connection
     peer :: s2s_peer(),
 
-    % running
-    running :: boolean(),
-
     % transaction map
     known_transactions :: #{},
-
-    % batch send nanos
-    batchSendNanos :: non_neg_integer(),
 
     % versioning
     %supportedVersion =  :: list(non_neg_integer()),
@@ -143,17 +132,14 @@
 -define(END_OF_STREAM, 255).
 
 % Request Type
-%const char *SiteToSiteRequest::RequestTypeStr[MAX_REQUEST_TYPE] = {
 -define(NEGOTIATE_FLOWFILE_CODEC, <<"NEGOTIATE_FLOWFILE_CODEC">>).
 -define(REQUEST_PEER_LIST, <<"REQUEST_PEER_LIST">>).
 -define(SEND_FLOWFILES, <<"SEND_FLOWFILES">>).
 -define(RECEIVE_FLOWFILES, <<"RECEIVE_FLOWFILES">>).
 -define(SHUTDOWN, <<"SHUTDOWN">>).
 
-%/**
-% * An enumeration for specifying the direction in which data should be
-% * transferred between a client and a remote NiFi instance.
-% */
+% An enumeration for specifying the direction in which data should be
+% transferred between a client and a remote NiFi instance.
 -define(TRANSFER_DIRECTION_SEND, 'send').
 -define(TRANSFER_DIRECTION_RECEIVE, 'receive').
 

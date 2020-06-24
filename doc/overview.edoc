@@ -1,0 +1,18 @@
+@title NiFi Site to Site
+@author João Henrique Ferreira de Freitas <joaohf@gmail.com>
+@copyright {@years} João Henrique Ferreira de Freitas
+@version {@version}
+
+@doc
+nifi_s2s is an Erlang implementation of <a href="https://nifi.apache.org/docs/nifi-docs/html/user-guide.html#site-to-site" target="_blank">NiFi Site to Site protocol</a>.
+S2S is the NiFi native way to transfer flowfiles to a NiFi cluster or node.
+
+The source code can be found on <a href="https://github.com/joaohf/nifi_s2s" target="_blank">GitHub</a>.
+
+The public API of nifi_s2s can be found in the {@link nifi_s2s} module.
+
+<h2>License</h2>
+
+<a href="https://github.com/joaohf/nifi_s2s/LICENSE" target="_blank">MIT License</a>.
+
+@end

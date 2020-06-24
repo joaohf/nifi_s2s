@@ -123,9 +123,10 @@ transfer_flowfiles(Config) ->
     Content = <<"Test Nifi Content">>,
     Attributes = #{ <<"TEST1">> => <<"Test">>},
 
-    Flowfile = nifi_flowfile:new(Attributes, Content),
+    Fun = fun(_Elem, AccIn) -> nifi_flowfile:add(Attributes, Content, AccIn) end,
+    Flowfiles = lists:foldl(Fun, nifi_flowfile:new(), lists:seq(0, 10)),
 
-    ok = nifi_s2s:transfer_flowfiles(Pid, Flowfile),
+    ok = nifi_s2s:transfer_flowfiles(Pid, Flowfiles),
 
     ok = nifi_s2s:close(Pid),
 
