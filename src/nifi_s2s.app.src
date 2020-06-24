@@ -1,6 +1,6 @@
 {application, nifi_s2s,
  [{description, "nifi site-to-site protocol"},
-  {vsn, "0.1.0"},
+  {vsn, "0.0.1"},
   {registered, []},
   {applications,
    [kernel,
